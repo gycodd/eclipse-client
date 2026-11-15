@@ -1,0 +1,66 @@
+name: Build Android APK
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 26.3.11579264
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK / NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;${NDK_VERSION}"
+
+      # Xray + sing-box + tun2socks -> app/libs/xray.aar
+      - name: Build xray.aar (gomobile)
+        run: |
+          cd android/xray
+          [ -f go.mod ] || go mod init example.com/xrayroot
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          export PATH=$PATH:$(go env GOPATH)/bin
+          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}
+          gomobile init
+          go get github.com/xtls/xray-core@latest
+          go get github.com/sagernet/sing-box@v1.14.2
+          go get github.com/xjasonlyu/tun2socks/v2@latest
+          go get -tool golang.org/x/mobile/cmd/gobind
+          go get -tool golang.org/x/mobile/cmd/gomobile
+          go mod tidy
+          mkdir -p ../app/libs
+          gomobile bind -target=android/arm64,android/arm,android/amd64 -androidapi 24 \
+            -javapkg app.eclipse -trimpath \
+            -tags="with_quic" \
+            -ldflags="-s -w -checklinkname=0" \
+            -o ../app/libs/xray.aar ./xraybridge
+          ls -la ../app/libs
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eclipse-android-apk
+          path: android/app/build/outputs/apk/release/*.apk

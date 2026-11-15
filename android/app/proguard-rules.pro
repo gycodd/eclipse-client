@@ -1,0 +1,2 @@
+-keep class app.eclipse.xraybridge.** { *; }
+-keep class go.** { *; }
